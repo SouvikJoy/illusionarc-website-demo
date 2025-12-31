@@ -5,7 +5,7 @@ const props = defineProps<{
   game: ArcadeGame
   minimalUi?: boolean
   defer?: boolean
-  fullscreen?: boolean // ✅ add this
+  fullscreen?: boolean
 }>()
 
 const route = useRoute()
@@ -18,15 +18,18 @@ const minimal = computed(() => props.minimalUi || ui.value === 'min')
 const aspect = computed(() => props.game.embed.aspectRatio || '16/9')
 const minHeight = computed(() => props.game.embed.minHeight ?? 520)
 
-// ✅ control mounting (prevents Unity autostart)
+// ✅ Control iframe mounting (prevents Unity autostart)
 const started = ref(!props.defer)
 
 function start() {
   started.value = true
 }
+function stop() {
+  started.value = false
+}
 
 function requestFullscreen() {
-  // Better to fullscreen the wrapper, not iframe (iOS quirks)
+  // iOS Safari may not allow true fullscreen. Overlay fullscreen is the main solution.
   const el = wrapRef.value || iframeRef.value
   if (!el) return
   const anyEl = el as any
@@ -45,14 +48,13 @@ const emit = defineEmits<{
 }>()
 
 function onMessage(e: MessageEvent) {
-  const sameOrigin = e.origin === window.location.origin
-  if (!sameOrigin) return
-
+  // ✅ safer default: only accept from same origin
+  if (e.origin !== window.location.origin) return
   const data = e.data
   if (!data || typeof data !== 'object') return
 
-  if (data.type === 'SCORE' && typeof data.score === 'number') {
-    emit('score', { score: data.score, raw: data })
+  if ((data as any).type === 'SCORE' && typeof (data as any).score === 'number') {
+    emit('score', { score: (data as any).score, raw: data })
   }
 }
 
@@ -60,24 +62,21 @@ onMounted(() => window.addEventListener('message', onMessage))
 onBeforeUnmount(() => window.removeEventListener('message', onMessage))
 
 const src = computed(() => {
-  // ✅ always prevent immediate start by default (if your index.html supports it)
-  // if Unity template ignores this, defer=true still prevents loading.
+  // Optional params passed down
   const theme = route.query.theme ? `theme=${encodeURIComponent(String(route.query.theme))}` : ''
   const autostart =
-      route.query.autostart
-          ? `autostart=${encodeURIComponent(String(route.query.autostart))}`
-          : `autostart=0`
+      route.query.autostart ? `autostart=${encodeURIComponent(String(route.query.autostart))}` : `autostart=0`
   const qs = [theme, autostart].filter(Boolean).join('&')
   return qs
       ? `${props.game.sourceUrl}${props.game.sourceUrl.includes('?') ? '&' : '?'}${qs}`
       : props.game.sourceUrl
 })
 
-defineExpose({ start, requestFullscreen })
+defineExpose({ start, stop, requestFullscreen })
 </script>
 
 <template>
-  <div class="relative">
+  <div class="relative" :class="fullscreen ? 'h-full' : ''">
     <!-- Optional mini UI (embed page uses this) -->
     <div v-if="minimal" class="absolute z-10 right-3 top-3 flex gap-2">
       <UButton size="xs" variant="solid" color="gray" @click="toggleSound">
@@ -91,14 +90,15 @@ defineExpose({ start, requestFullscreen })
     <div
         ref="wrapRef"
         class="w-full overflow-hidden rounded-2xl border border-white/10 bg-black/30 shadow-2xl"
-        :style="{ minHeight: minHeight + 'px' }"
+        :class="fullscreen ? 'h-full' : ''"
+        :style="fullscreen ? { height: '100%', minHeight: '100%' } : { minHeight: minHeight + 'px' }"
     >
-      <!-- Responsive aspect ratio wrapper -->
+      <!-- Wrapper: fullscreen fills parent height; otherwise use aspect ratio -->
       <div
           class="relative w-full"
-          :style="props.fullscreen ? { height: '100%' } : { aspectRatio: aspect }"
+          :style="fullscreen ? { height: '100%' } : { aspectRatio: aspect }"
       >
-      <!-- ✅ only mount iframe when started -->
+        <!-- ✅ Only mount iframe when started -->
         <iframe
             v-if="started"
             ref="iframeRef"
@@ -110,7 +110,7 @@ defineExpose({ start, requestFullscreen })
             loading="eager"
             sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-forms"
         />
-        <!-- Placeholder while deferred -->
+
         <div v-else class="absolute inset-0 grid place-items-center text-sm opacity-70">
           Ready to play
         </div>
