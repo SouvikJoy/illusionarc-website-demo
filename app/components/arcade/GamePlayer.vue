@@ -3,7 +3,6 @@ import type { ArcadeGame } from '@/data/games'
 
 const props = defineProps<{
   game: ArcadeGame
-  minimalUi?: boolean
   defer?: boolean
   fullscreen?: boolean
 }>()
@@ -12,13 +11,10 @@ const route = useRoute()
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 const wrapRef = ref<HTMLElement | null>(null)
 
-const ui = computed(() => String(route.query.ui || '').toLowerCase()) // "min"
-const minimal = computed(() => props.minimalUi || ui.value === 'min')
-
 const aspect = computed(() => props.game.embed.aspectRatio || '16/9')
 const minHeight = computed(() => props.game.embed.minHeight ?? 520)
 
-// ✅ Control iframe mounting (prevents Unity autostart)
+// Mount iframe only when started (prevents autostart)
 const started = ref(!props.defer)
 
 function start() {
@@ -28,19 +24,18 @@ function stop() {
   started.value = false
 }
 
+// Send message to the game iframe
+function send(payload: any) {
+  iframeRef.value?.contentWindow?.postMessage(payload, '*')
+}
+
+// Best-effort fullscreen (iOS Safari may ignore it)
 function requestFullscreen() {
-  // iOS Safari may not allow true fullscreen. Overlay fullscreen is the main solution.
-  const el = wrapRef.value || iframeRef.value
+  const el = wrapRef.value
   if (!el) return
   const anyEl = el as any
   if (anyEl.requestFullscreen) anyEl.requestFullscreen()
   else if (anyEl.webkitRequestFullscreen) anyEl.webkitRequestFullscreen()
-}
-
-const soundOn = ref(true)
-function toggleSound() {
-  soundOn.value = !soundOn.value
-  iframeRef.value?.contentWindow?.postMessage({ type: 'SOUND', on: soundOn.value }, '*')
 }
 
 const emit = defineEmits<{
@@ -48,11 +43,10 @@ const emit = defineEmits<{
 }>()
 
 function onMessage(e: MessageEvent) {
-  // ✅ safer default: only accept from same origin
+  // safer: accept only same-origin
   if (e.origin !== window.location.origin) return
   const data = e.data
   if (!data || typeof data !== 'object') return
-
   if ((data as any).type === 'SCORE' && typeof (data as any).score === 'number') {
     emit('score', { score: (data as any).score, raw: data })
   }
@@ -62,43 +56,27 @@ onMounted(() => window.addEventListener('message', onMessage))
 onBeforeUnmount(() => window.removeEventListener('message', onMessage))
 
 const src = computed(() => {
-  // Optional params passed down
-  const theme = route.query.theme ? `theme=${encodeURIComponent(String(route.query.theme))}` : ''
+  // default: autostart=0 to prevent instant start
   const autostart =
       route.query.autostart ? `autostart=${encodeURIComponent(String(route.query.autostart))}` : `autostart=0`
-  const qs = [theme, autostart].filter(Boolean).join('&')
+  const qs = [autostart].filter(Boolean).join('&')
   return qs
       ? `${props.game.sourceUrl}${props.game.sourceUrl.includes('?') ? '&' : '?'}${qs}`
       : props.game.sourceUrl
 })
 
-defineExpose({ start, stop, requestFullscreen })
+defineExpose({ start, stop, send, requestFullscreen })
 </script>
 
 <template>
   <div class="relative" :class="fullscreen ? 'h-full' : ''">
-    <!-- Optional mini UI (embed page uses this) -->
-    <div v-if="minimal" class="absolute z-10 right-3 top-3 flex gap-2">
-      <UButton size="xs" variant="solid" color="gray" @click="toggleSound">
-        <span class="opacity-80">{{ soundOn ? 'Sound' : 'Muted' }}</span>
-      </UButton>
-      <UButton size="xs" variant="solid" color="primary" @click="requestFullscreen">
-        Fullscreen
-      </UButton>
-    </div>
-
     <div
         ref="wrapRef"
         class="w-full overflow-hidden rounded-2xl border border-white/10 bg-black/30 shadow-2xl"
         :class="fullscreen ? 'h-full' : ''"
         :style="fullscreen ? { height: '100%', minHeight: '100%' } : { minHeight: minHeight + 'px' }"
     >
-      <!-- Wrapper: fullscreen fills parent height; otherwise use aspect ratio -->
-      <div
-          class="relative w-full"
-          :style="fullscreen ? { height: '100%' } : { aspectRatio: aspect }"
-      >
-        <!-- ✅ Only mount iframe when started -->
+      <div class="relative w-full" :style="fullscreen ? { height: '100%' } : { aspectRatio: aspect }">
         <iframe
             v-if="started"
             ref="iframeRef"
@@ -110,7 +88,6 @@ defineExpose({ start, stop, requestFullscreen })
             loading="eager"
             sandbox="allow-scripts allow-same-origin allow-pointer-lock allow-forms"
         />
-
         <div v-else class="absolute inset-0 grid place-items-center text-sm opacity-70">
           Ready to play
         </div>

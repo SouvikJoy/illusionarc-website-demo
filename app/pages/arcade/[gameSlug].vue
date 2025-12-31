@@ -15,7 +15,7 @@ useHead(() => ({
   meta: [{ name: 'description', content: game.value!.shortPitch }]
 }))
 
-// Leaderboard
+// ---- leaderboard ----
 const { submitScore } = useLeaderboard()
 const playerName = useState<string>('playerName', () => 'Player')
 const lastScore = ref<number | null>(null)
@@ -31,30 +31,26 @@ async function onScore(score: number) {
   }
 }
 
-// Like / Favourite
+// ---- lobby actions ----
 const liked = ref(false)
 const fav = ref(false)
+const showControls = ref(false)
 
 onMounted(() => {
   liked.value = localStorage.getItem(`like_${game.value!.slug}`) === '1'
   fav.value = localStorage.getItem(`fav_${game.value!.slug}`) === '1'
 })
-
 watch(liked, (v) => localStorage.setItem(`like_${game.value!.slug}`, v ? '1' : '0'))
 watch(fav, (v) => localStorage.setItem(`fav_${game.value!.slug}`, v ? '1' : '0'))
 
-// Controls modal
-const showControls = ref(false)
-
-// ✅ Play state is URL-based
+// ---- play state in URL: ?play=1 ----
 const playing = computed(() => route.query.play === '1')
 
-// Force remount to fully stop audio + iframe on close
+// Force remount to kill audio + iframe state
 const playerKey = ref(0)
-const playerRef = ref<any>(null)
+const playerRef = ref<InstanceType<typeof GamePlayer> | null>(null)
 
 function openPlay() {
-  // push so iOS swipe-back returns to lobby state
   router.push({ query: { ...route.query, play: '1' } })
 }
 
@@ -64,7 +60,24 @@ function closePlay() {
   router.replace({ query: q })
 }
 
-// When play state changes, start/stop the iframe
+// ---- header controls ----
+const soundOn = ref(true)
+function toggleSound() {
+  soundOn.value = !soundOn.value
+  playerRef.value?.send?.({ type: 'SOUND', on: soundOn.value })
+}
+
+function requestFullscreen() {
+  // Best-effort. iOS Safari often blocks real fullscreen for iframes/canvas.
+  // Overlay is already "fullscreen UI".
+  playerRef.value?.requestFullscreen?.()
+}
+
+function hardStop() {
+  playerRef.value?.stop?.()
+  playerKey.value++
+}
+
 watch(
     playing,
     async (v) => {
@@ -72,37 +85,40 @@ watch(
         await nextTick()
         playerRef.value?.start?.()
       } else {
-        playerRef.value?.stop?.()
-        playerKey.value++ // hard reset next time
+        hardStop()
       }
     },
     { immediate: true }
 )
 
-// Extra safety for Safari BFCache / backgrounding
-function hardStop() {
-  playerRef.value?.stop?.()
-  playerKey.value++
+// ---- focus/visibility behavior ----
+// DON’T permanently stop on blur, otherwise you get stuck on "Ready to play".
+// If it was stopped, resume when visible again.
+function onVisibilityChange() {
+  if (!playing.value) return
+  if (document.visibilityState === 'visible') {
+    // resume
+    playerRef.value?.start?.()
+  }
 }
-function onVisibility() {
-  if (document.visibilityState === 'hidden') hardStop()
-}
+
+// iOS BFCache / pagehide: stop audio to prevent "black page + sound"
 function onPageHide() {
   hardStop()
 }
 
 onMounted(() => {
-  document.addEventListener('visibilitychange', onVisibility)
+  document.addEventListener('visibilitychange', onVisibilityChange)
   window.addEventListener('pagehide', onPageHide)
 })
 onBeforeUnmount(() => {
-  document.removeEventListener('visibilitychange', onVisibility)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
   window.removeEventListener('pagehide', onPageHide)
 })
 
-// Ratings
-const ratingValue = computed(() => game.value?.rating?.value ?? 0)
-const ratingCount = computed(() => game.value?.rating?.count ?? 0)
+// ---- ratings (optional if you have these fields) ----
+const ratingValue = computed(() => (game.value as any)?.rating?.value ?? 0)
+const ratingCount = computed(() => (game.value as any)?.rating?.count ?? 0)
 const fullStars = computed(() => Math.floor(ratingValue.value))
 </script>
 
@@ -121,7 +137,7 @@ const fullStars = computed(() => Math.floor(ratingValue.value))
       </div>
     </div>
 
-    <!-- Lobby -->
+    <!-- Lobby Card -->
     <UCard class="mt-6 bg-white/5 border-white/10 overflow-hidden">
       <div class="grid gap-4 md:grid-cols-2">
         <div class="rounded-2xl overflow-hidden border border-white/10 bg-black/20">
@@ -150,7 +166,7 @@ const fullStars = computed(() => Math.floor(ratingValue.value))
               />
             </div>
             <div class="text-sm opacity-80">
-              <b class="opacity-100">{{ ratingValue.toFixed(1) }}</b>
+              <b class="opacity-100">{{ Number(ratingValue).toFixed(1) }}</b>
               <span class="opacity-70">({{ ratingCount }} ratings)</span>
             </div>
           </div>
@@ -213,37 +229,54 @@ const fullStars = computed(() => Math.floor(ratingValue.value))
       </UCard>
     </UModal>
 
-    <!-- Fullscreen Overlay (URL state = ?play=1) -->
+    <!-- Fullscreen Overlay -->
     <Teleport to="body">
       <div v-if="playing" class="fixed inset-0 z-[200] bg-black">
-        <div class="h-14 px-3 flex items-center justify-between border-b border-white/10 bg-black/60 backdrop-blur">
-          <div class="flex items-center gap-2">
-            <span class="font-semibold">{{ game!.name }}</span>
-            <span class="text-xs opacity-70">Play</span>
-          </div>
+        <!-- Header MUST be above iframe -->
+        <div
+            class="absolute left-0 right-0 top-0 z-[220] pointer-events-auto border-b border-white/10 bg-black/70 backdrop-blur"
+            :style="{ paddingTop: 'env(safe-area-inset-top)' }"
+        >
+          <div class="h-14 px-3 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="font-semibold">{{ game!.name }}</span>
+              <span class="text-xs opacity-70">Play</span>
+            </div>
 
-          <div class="flex items-center gap-2">
-            <UButton variant="ghost" @click="playerRef?.requestFullscreen?.()">
-              <UIcon name="i-heroicons-arrows-pointing-out" class="w-5 h-5" />
-              Fullscreen
-            </UButton>
-            <UButton variant="ghost" @click="closePlay">
-              <UIcon name="i-heroicons-x-mark" class="w-5 h-5" />
-              Close
-            </UButton>
+            <div class="flex items-center gap-2">
+              <UButton variant="ghost" @click="toggleSound">
+                <UIcon :name="soundOn ? 'i-heroicons-speaker-wave' : 'i-heroicons-speaker-x-mark'" class="w-5 h-5" />
+                {{ soundOn ? 'Sound' : 'Muted' }}
+              </UButton>
+
+              <UButton variant="ghost" @click="requestFullscreen">
+                <UIcon name="i-heroicons-arrows-pointing-out" class="w-5 h-5" />
+                Fullscreen
+              </UButton>
+
+              <UButton variant="ghost" @click="closePlay">
+                <UIcon name="i-heroicons-x-mark" class="w-5 h-5" />
+                Close
+              </UButton>
+            </div>
           </div>
         </div>
 
-        <div class="p-2 h-[calc(100vh-56px)]">
-          <GamePlayer
-              :key="playerKey"
-              ref="playerRef"
-              :game="game!"
-              :defer="true"
-              :fullscreen="true"
-              :minimal-ui="true"
-              @score="(e) => onScore(e.score)"
-          />
+        <!-- Game area below header -->
+        <div
+            class="absolute inset-0 z-[210]"
+            :style="{ paddingTop: 'calc(env(safe-area-inset-top) + 56px)', paddingBottom: 'env(safe-area-inset-bottom)' }"
+        >
+          <div class="h-full p-2">
+            <GamePlayer
+                :key="playerKey"
+                ref="playerRef"
+                :game="game!"
+                :defer="true"
+                :fullscreen="true"
+                @score="(e) => onScore(e.score)"
+            />
+          </div>
         </div>
       </div>
     </Teleport>
