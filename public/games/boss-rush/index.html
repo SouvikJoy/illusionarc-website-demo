@@ -1,30 +1,73 @@
-<!doctype html>
-<html>
+<!DOCTYPE html>
+<html lang="en-us">
 <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Boss Rush Demo</title>
-    <style>
-        html,body{margin:0;height:100%;background:#05070c;color:#e7eefc;font-family:system-ui}
-        .wrap{height:100%;display:grid;place-items:center}
-        button{padding:14px 18px;border:1px solid rgba(255,255,255,.2);border-radius:14px;background:rgba(255,255,255,.06);color:#fff;font-size:16px}
-        button:active{transform:scale(.98)}
-        .sub{opacity:.7;margin-top:10px;font-size:13px;text-align:center}
-    </style>
-</head>
-<body>
-<div class="wrap">
-    <div>
-        <button id="btn">Finish Run (send SCORE)</button>
-        <div class="sub">This is a placeholder game file. It posts {type:'SCORE'} to parent.</div>
-    </div>
-</div>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+  <title>Unity Web Player | Boss Rush</title>
 
-<script>
-    document.getElementById('btn').addEventListener('click', () => {
-        const score = Math.floor(Math.random() * 5000)
-        window.parent.postMessage({ type:'SCORE', score }, window.location.origin)
-    })
-</script>
+  <!-- Always set viewport (not only mobile) -->
+  <meta name="viewport"
+        content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes" />
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    /* If you embed in iframe, this makes it fill the iframe area */
+    #unity-container {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* Canvas must follow container */
+    #unity-canvas {
+      width: 100% !important;
+      height: 100% !important;
+      display: block;
+      background: url('Build/boss2.jpg') center / cover no-repeat;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="unity-container">
+    <!-- Remove fixed width/height attrs -->
+    <canvas id="unity-canvas" tabindex="-1"></canvas>
+  </div>
+
+  <script src="Build/boss2.loader.js"></script>
+  <script>
+    const canvas = document.querySelector("#unity-canvas");
+
+    createUnityInstance(canvas, {
+      arguments: [],
+      dataUrl: "Build/boss2.data.unityweb",
+      frameworkUrl: "Build/boss2.framework.js.unityweb",
+      codeUrl: "Build/boss2.wasm.unityweb",
+      streamingAssetsUrl: "StreamingAssets",
+      companyName: "illusion Lab",
+      productName: "Boss Rush",
+      productVersion: "0.11",
+
+      // Optional: better crispness on high DPI screens (can be heavier on mobile)
+      // devicePixelRatio: window.devicePixelRatio
+    }).catch((message) => {
+      alert(message);
+    });
+
+    // Optional safety resize (helps some browsers/iframes/orientation changes)
+    window.addEventListener("resize", () => {
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
+    });
+  </script>
 </body>
 </html>
